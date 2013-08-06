@@ -1,4 +1,4 @@
-YandexDNS
-=========
-
-Yandex API DNS: perl module
+API
+===
+Contain:
+ - Yandex API DNS: YandexDNS.pm

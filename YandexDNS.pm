@@ -5,6 +5,7 @@ use warnings;
 use strict;
 
 use POSIX qw{strftime};
+use XML::Simple qw{XMLin};
 
 use HTTP::Request;
 use HTTP::Status qw{:is};
@@ -72,6 +73,115 @@ sub _get_api_response {
 
 	return $r->content if ( is_success($r->status_line) );
 	return undef;
+}
+
+
+sub new {
+	my $tmp = shift;
+	my $class = ref($tmp) || $tmp;
+
+	my ($token, $domain_name, $api_options) = @_;
+	unless ($token) {
+		_print_it('API token must be defined');
+		return undef;
+	}
+
+	my $h_bless = { token => $token };
+	$h_bless->{'domain_name'} = $domain_name if ($domain_name);
+	$h_bless->{'api_options'} = $api_options if ($api_options and ref($api_options) eq 'HASH');
+
+	bless $h_bless, $class;
+	return $h_bless;
+}
+
+
+sub get_domain_records {
+	my $self = shift;
+
+	my ($domain_name) = @_;
+	$domain_name ||= $self->{'domain_name'};
+
+	unless ($domain_name) {
+		_print_it('domain name must be defined');
+		return undef;
+	}
+
+	my $xml_answer = _get_api_response($api_dns_url_prefix . 'get_domain_records.xml',
+		{
+			'domain' => $domain_name,
+			'token' => $self->{'token'},
+		}
+	);
+
+	unless ($xml_answer) {
+		_print_it('cannot get record for domain ' . $domain_name);
+		return undef;
+	}
+
+	my $h_parse_xml;
+	eval { $h_parse_xml = XMLin($xml_answer) };
+	if ($@) {
+		_print_it('error while parse XML: ' . $@);
+		return undef;
+	}
+
+	unless ($h_parse_xml) {
+		_print_it('empty XML answer');
+		return undef;
+	}
+
+	return $h_parse_xml;
+}
+
+
+sub set_a_record {
+	my $self = shift;
+
+	my ($domain_name, $ipv4_address) = @_;
+	$domain_name ||= $self->{'domain_name'};
+
+	unless ($domain_name && $ipv4_address) {
+		_print_it('domain name, IPv4 and token addr must valid');
+		return undef;
+	}
+
+	# Validate IPv4 addr
+	my @octets = split(/\./, $ipv4_address);
+	if ( scalar(@octets) != 4 ) {
+		_print_it('IPv4 must contain 4 octets');
+		return undef;
+	}
+	for my $octet (@octets) {
+		if ( $octet !~ m{^\d+$}o || $octet > 255 || $octet < 0 ) {
+			_print_it('non valid octet "' . $octet . '" in IPv4 addr ' . $ipv4_address);
+			return undef;
+		}
+	}
+
+	# Check exists record
+	# first step - find nearest valid domain name
+	my @prefixes = split(/\./, $domain_name);
+	for (my $i = scalar(@prefixes); $i > 0; $i--) {
+		my $h_xml_domain = $self->get_domain_records( join('.', @prefixes) );
+		if (
+			$h_xml_domain &&
+			exists $h_xml_domain->{'domains'}->{'error'} &&
+			$h_xml_domain->{'domains'}->{'error'} eq 'ok'
+		) {
+			last;
+		}
+
+		shift @prefixes;
+	}
+
+	# If not found valid domain name
+	unless (scalar(@prefixes)) {
+		_print_it('cannot get domain data');
+		return undef;
+	}
+
+	# Valid domain join('.', @prefixes);
+	# to be continued
 }
 
 

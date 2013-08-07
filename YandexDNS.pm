@@ -181,10 +181,7 @@ sub _check_exists_record {
 	}
 
 	my $h_find_nearest_domain = $self->_find_nearest_subdomain_and_domain($domain_name);
-	unless (
-		$h_find_nearest_domain &&
-		exists $h_find_nearest_domain->{'domain'}
-	) {
+	unless ( $h_find_nearest_domain && exists $h_find_nearest_domain->{'domain'} ) {
 		_print_it('cannot get domain data');
 		return undef;
 	}

@@ -219,7 +219,7 @@ sub set_record {
 
 	my $h_find_nearest_domain = $self->_find_nearest_subdomain_and_domain($domain_name);
 	unless ( $h_find_nearest_domain && exists $h_find_nearest_domain->{'domain'} ) {
-		_print_if('cannot found nearest domain');
+		_print_it('cannot found nearest domain');
 		return undef;
 	}
 
@@ -287,7 +287,7 @@ sub del_record {
 	if ( $h_records_id && keys %{$h_records_id} ) {
 		my $h_find_nearest_domain = $self->_find_nearest_subdomain_and_domain($domain_name);
 		unless ( $h_find_nearest_domain && exists $h_find_nearest_domain->{'domain'} ) {
-			_print_if('cannot found nearest domain');
+			_print_it('cannot found nearest domain');
 			return undef;
 		}
 

@@ -51,8 +51,6 @@ sub _get_api_response {
 		$action eq 'edit'
 	) {
 		my @req_content = map { $_ => $params->{$_} } keys %$params;
-use Data::Dumper;
-print Dumper @req_content;
 		$r = $ua->post(
 			$api_dns_url_prefix . $action,
 			'PddToken'	=> $token,

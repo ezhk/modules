@@ -7,39 +7,61 @@ use strict;
 use lib::abs qw{../};
 use Log qw{_print_it};
 
-use XML::Simple qw{XMLin};
+use JSON::XS qw{decode_json};
 
 use HTTP::Request;
 use HTTP::Status qw{:is};
 use LWP::UserAgent;
 
 
-our $api_dns_url_prefix = 'https://pddimp.yandex.ru/nsapi/';
+our $api_dns_url_prefix = 'https://pddimp.yandex.ru/api2/admin/dns/';
 
 
 sub _get_api_response {
-	my ( $url, $url_get_params ) = @_;
+	my ( $action, $params ) = @_;
 
-	unless ($url) {
+	unless ($action) {
 		_print_it('missing URL variable', 'error');
 		return undef;
 	}
 
-	unless ( $url_get_params && keys %$url_get_params ) {
-		_print_it('missing GET params', 'error');
+	unless ( $params && keys %$params ) {
+		_print_it('missing params', 'error');
 		return undef;
 	}
 
-	my $request_url = $url . '?' .
-		join('&', map { "$_=$url_get_params->{$_}" } keys %$url_get_params);
+	my $token = delete $params->{'token'};
+	unless ($token) {
+		_print_it('token must be defined', 'error');
+		return undef;
+	}
 
-	my $req = new HTTP::Request;
-	$req->url($request_url);
-	$req->method('GET');
-	$req->header( {"User-Agent" => "Yandex API DNS - ezhk's module"} );
-
+	my $r;
 	my $ua = LWP::UserAgent->new( (timeout => 5) );
-	my $r = $ua->request($req);
+	if ($action eq 'list') {
+		my $request_url = $api_dns_url_prefix . $action . '?' .
+			join('&', map { "$_=$params->{$_}" } keys %$params);
+		$r = $ua->get(
+			$request_url,
+			'PddToken'	=> $token,
+		);
+	} elsif (
+		$action eq 'add' or
+		$action eq 'del' or
+		$action eq 'edit'
+	) {
+		my @req_content = map { $_ => $params->{$_} } keys %$params;
+use Data::Dumper;
+print Dumper @req_content;
+		$r = $ua->post(
+			$api_dns_url_prefix . $action,
+			'PddToken'	=> $token,
+			'Content'	=> \@req_content
+		);
+	} else {
+		_print_it('action might be: "list", "add", "del" or "edit"', 'error');
+		return undef;
+	}
 
 	return $r->content if ( is_success($r->status_line) );
 	return undef;
@@ -76,31 +98,31 @@ sub _get_domain_records {
 		return undef;
 	}
 
-	my $xml_answer = _get_api_response($api_dns_url_prefix . 'get_domain_records.xml',
+	my $json_answer = _get_api_response('list',
 		{
 			'domain' => $domain_name,
 			'token' => $self->{'token'},
 		}
 	);
 
-	unless ($xml_answer) {
+	unless ($json_answer) {
 		_print_it('cannot get record for domain ' . $domain_name);
 		return undef;
 	}
 
-	my $h_parse_xml;
-	eval { $h_parse_xml = XMLin($xml_answer) };
+	my $h_parse_json;
+	eval { $h_parse_json = decode_json($json_answer) };
 	if ($@) {
-		_print_it('error while parse XML: ' . $@);
+		_print_it('error while parse JSON: ' . $@);
 		return undef;
 	}
 
-	unless ($h_parse_xml) {
-		_print_it('empty XML answer');
+	unless ($h_parse_json) {
+		_print_it('empty JSON answer');
 		return undef;
 	}
 
-	return $h_parse_xml;
+	return $h_parse_json;
 }
 
 
@@ -118,11 +140,11 @@ sub _find_nearest_subdomain_and_domain {
 	my @subdomain;
 	my @prefixes = split(/\./, $domain_name);
 	for (my $i = scalar(@prefixes); $i > 0; $i--) {
-		my $h_xml_domain = $self->_get_domain_records( join('.', @prefixes) );
+		my $h_json_domain = $self->_get_domain_records( join('.', @prefixes) );
 		if (
-			$h_xml_domain &&
-			exists $h_xml_domain->{'domains'}->{'error'} &&
-			$h_xml_domain->{'domains'}->{'error'} eq 'ok'
+			$h_json_domain &&
+			exists $h_json_domain->{'success'} &&
+			$h_json_domain->{'success'} eq 'ok'
 		) {
 			last;
 		}
@@ -155,29 +177,25 @@ sub _check_exists_record {
 	}
 
 	my $h_find_nearest_domain = $self->_find_nearest_subdomain_and_domain($domain_name);
-	unless ( $h_find_nearest_domain && exists $h_find_nearest_domain->{'domain'} ) {
+	if ( !$h_find_nearest_domain || exists $h_find_nearest_domain->{'error'} ) {
 		_print_it('cannot get domain data');
 		return undef;
 	}
 
-	my ($h_xml_domain, $h_valid_id_records, $valid_domain_name) = (
+	my ($h_json_domain, $h_valid_id_records, $valid_domain_name) = (
 		$self->_get_domain_records($h_find_nearest_domain->{'domain'}),
 		undef,
 		$h_find_nearest_domain->{'domain'}
 	);
 
-	if (exists $h_xml_domain->{'domains'}->{'domain'}) {
-		unless (exists $h_xml_domain->{'domains'}->{'domain'}->{'nsdelegated'}) {
-			_print_it('domain ' . $valid_domain_name . ' not delegated', 'warning');
-		}
-
-		if (exists $h_xml_domain->{'domains'}->{'domain'}->{'response'}->{'record'}) {
-			my $h_records = $h_xml_domain->{'domains'}->{'domain'}->{'response'}->{'record'};
-			for my $tmp_id_record ( keys %{$h_records} ) {
-				next unless (exists $h_records->{$tmp_id_record}->{'domain'});
-				next unless ($h_records->{$tmp_id_record}->{'domain'} eq $domain_name );
-
-				$h_valid_id_records->{$tmp_id_record} = $h_records->{$tmp_id_record};
+	if ( exists $h_json_domain->{'records'} and scalar(@{$h_json_domain->{'records'}}) ) {
+		for my $record_data ( @{$h_json_domain->{'records'}} ) {
+			if (
+				exists $record_data->{'fqdn'} &&
+				exists $record_data->{'record_id'} &&
+				$record_data->{'fqdn'} eq $domain_name
+			) {
+				$h_valid_id_records->{ $record_data->{'record_id'} } = $record_data;
 			}
 		}
 	} else {
@@ -207,7 +225,6 @@ sub set_record {
 	}
 
 	my ($h_records_id, $record_id) = ($self->_check_exists_record($domain_name), undef);
-
 	if ($h_records_id && keys %{$h_records_id}) {
 		for my $tmp_record_id (keys %$h_records_id) {
 			if ( lc($h_records_id->{$tmp_record_id}->{'type'}) eq lc($type)) {
@@ -223,51 +240,42 @@ sub set_record {
 		return undef;
 	}
 
-	my $get_params = $self->{'api_options'};
-	$get_params->{'token'} = $self->{'token'};
-	$get_params->{'domain'} = $h_find_nearest_domain->{'domain'};
-	$get_params->{'subdomain'} = $h_find_nearest_domain->{'subdomain'} if ( exists $h_find_nearest_domain->{'subdomain'} );
+	my $params = $self->{'api_options'};
+	$params->{'token'} = $self->{'token'};
+	$params->{'domain'} = $h_find_nearest_domain->{'domain'};
+	$params->{'subdomain'} = $h_find_nearest_domain->{'subdomain'} if ( exists $h_find_nearest_domain->{'subdomain'} );
+	$params->{'type'} = uc($type);
 
 	if ( ref(\$content) eq 'SCALAR' ) {
-		$get_params->{'content'} = $content;
+		$params->{'content'} = $content;
 	} elsif ( ref($content) eq 'HASH' ) {
-		for my $param (keys %{$content}) {
-			$get_params->{$param} = $content->{$param};
-		}
+		map { $params->{$_} = $content->{$_} } keys %{$content};
 	} else {
 		_print_it('content must be scalar or hash');
 		return undef;
 	}
 
-	my $xml_answer;
+	my $json_answer;
 	if ($record_id) {
-		$get_params->{'record_id'} = $record_id;
-		$xml_answer = _get_api_response(
-			$api_dns_url_prefix . 'edit_' . lc($type) . '_record.xml',
-			$get_params
-		);
+		$params->{'record_id'} = $record_id;
+		$json_answer = _get_api_response('edit', $params);
 	} else {
-		$xml_answer = _get_api_response(
-			$api_dns_url_prefix . 'add_' . lc($type) . '_record.xml',
-			$get_params
-		);
+		$json_answer = _get_api_response('add', $params);
 	}
 
-	my $h_parse_xml;
-	eval { $h_parse_xml = XMLin($xml_answer) };
+	my $h_parse_json;
+	eval { $h_parse_json = decode_json($json_answer) };
 	if ($@) {
-		_print_it('error while parse XML: ' . $@);
+		_print_it('error while parse JSON: ' . $@);
 		return undef;
 	}
 
-	unless ( $h_parse_xml && exists $h_parse_xml->{'domains'}->{'error'} ) {
-		_print_it('cannot get request error status');
+	if ( !$h_parse_json || exists $h_parse_json->{'error'} ) {
+		_print_it('cannot add/update record');
 		return undef;
 	}
 
-	return 1 if ($h_parse_xml->{'domains'}->{'error'} eq 'ok');
-
-	_print_it('cannot set records content: ' . $h_parse_xml->{'domains'}->{'error'});
+	return 1 if ($h_parse_json->{'success'} eq 'ok');
 	return 0;
 }
 
@@ -285,41 +293,30 @@ sub del_record {
 
 	my $h_records_id = $self->_check_exists_record($domain_name);
 	if ( $h_records_id && keys %{$h_records_id} ) {
-		my $h_find_nearest_domain = $self->_find_nearest_subdomain_and_domain($domain_name);
-		unless ( $h_find_nearest_domain && exists $h_find_nearest_domain->{'domain'} ) {
-			_print_it('cannot found nearest domain');
-			return undef;
-		}
-
 		for my $tmp_record_id (keys %$h_records_id) {
 			if (
 				($type && lc($h_records_id->{$tmp_record_id}->{'type'}) eq lc($type) ) ||
 				!defined $type
 			) {
-				my $xml_answer = _get_api_response(
-					$api_dns_url_prefix . 'delete_record.xml',
+				my $json_answer = _get_api_response(
+					'del',
 					{
 						'token' => $self->{'token'},
-						'domain' => $h_find_nearest_domain->{'domain'},
+						'domain' => $h_records_id->{$tmp_record_id}->{'domain'},
 						'record_id' => $tmp_record_id
 					}
 				);
 
-				my $h_parse_xml;
-				eval { $h_parse_xml = XMLin($xml_answer) };
+				my $h_parse_json;
+				eval { $h_parse_json = decode_json($json_answer) };
 				if ($@) {
-					_print_it('error while parse XML: ' . $@);
+					_print_it('error while parse JSON: ' . $@);
 					return undef;
 				}
 
-				unless ( $h_parse_xml && exists $h_parse_xml->{'domains'}->{'error'} ) {
-					_print_it('cannot get request error status');
+				if ( !$h_parse_json || exists $h_parse_json->{'error'} ) {
+					_print_it('cannot del record');
 					return undef;
-				}
-
-				unless ( $h_parse_xml->{'domains'}->{'error'} eq 'ok' ) {
-					_print_it('cannot del records content: ' . $h_parse_xml->{'domains'}->{'error'});
-					return 0;
 				}
 			}
 		}

@@ -77,11 +77,40 @@ sub new {
 	}
 
 	my $h_bless = { token => $token };
+	$h_bless->{'cache_flag'} = delete $api_options->{'cache'}
+		if (exists $api_options->{'cache'});
 	$h_bless->{'domain_name'} = $domain_name if ($domain_name);
 	$h_bless->{'api_options'} = $api_options if ($api_options and ref($api_options) eq 'HASH');
 
 	bless $h_bless, $class;
 	return $h_bless;
+}
+
+
+sub _cache {
+	my $self = shift;
+	my ($domain_name, $cache_data) = @_;
+
+	unless ($domain_name) {
+		_print_it('cache use only for show domain list, domain must be defined');
+		return undef;
+	}
+
+	# check flag 'cache' and if 'true', than store data or read from cache
+	if (
+		exists $self->{'cache_flag'} &&
+		$self->{'cache_flag'} =~ m{(y(es)?|true|1)}io
+	) {
+		if ($cache_data) {
+			$self->{'cache_data'}->{$domain_name} = $cache_data;
+			return 1;
+		}
+
+		return $self->{'cache_data'}->{$domain_name}
+			if (exists $self->{'cache_data'}->{$domain_name});
+	}
+
+	return 0;
 }
 
 
@@ -95,6 +124,9 @@ sub _get_domain_records {
 		_print_it('domain name must be defined');
 		return undef;
 	}
+
+	my $cache = $self->_cache($domain_name);
+	return $cache if ($cache);
 
 	my $json_answer = _get_api_response('list',
 		{
@@ -120,6 +152,7 @@ sub _get_domain_records {
 		return undef;
 	}
 
+	$self->_cache($domain_name, $h_parse_json);
 	return $h_parse_json;
 }
 

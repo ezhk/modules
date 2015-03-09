@@ -50,18 +50,32 @@ sub _get_api_response {
 		$action eq 'del' or
 		$action eq 'edit'
 	) {
-		my @req_content = map { $_ => $params->{$_} } keys %$params;
 		$r = $ua->post(
 			$api_dns_url_prefix . $action,
 			'PddToken'	=> $token,
-			'Content'	=> \@req_content
+			'Content'	=> $params,
 		);
 	} else {
 		_print_it('action might be: "list", "add", "del" or "edit"', 'error');
 		return undef;
 	}
 
-	return $r->content if ( is_success($r->status_line) );
+	if ( is_success($r->status_line) ) {
+		my $h_parse_json;
+		eval { $h_parse_json = decode_json($r->content) };
+		if ($@) {
+			_print_it('error while parse JSON: ' . $@);
+			return undef;
+		}
+
+		unless ($h_parse_json) {
+			_print_it('empty JSON answer');
+			return undef;
+		}
+
+		return $h_parse_json;
+	}
+
 	return undef;
 }
 
@@ -140,20 +154,8 @@ sub _get_domain_records {
 		return undef;
 	}
 
-	my $h_parse_json;
-	eval { $h_parse_json = decode_json($json_answer) };
-	if ($@) {
-		_print_it('error while parse JSON: ' . $@);
-		return undef;
-	}
-
-	unless ($h_parse_json) {
-		_print_it('empty JSON answer');
-		return undef;
-	}
-
-	$self->_cache($domain_name, $h_parse_json);
-	return $h_parse_json;
+	$self->_cache($domain_name, $json_answer);
+	return $json_answer;
 }
 
 
@@ -294,19 +296,12 @@ sub set_record {
 		$json_answer = _get_api_response('add', $params);
 	}
 
-	my $h_parse_json;
-	eval { $h_parse_json = decode_json($json_answer) };
-	if ($@) {
-		_print_it('error while parse JSON: ' . $@);
-		return undef;
-	}
-
-	if ( !$h_parse_json || exists $h_parse_json->{'error'} ) {
+	if ( !$json_answer || exists $json_answer->{'error'} ) {
 		_print_it('cannot add/update record');
 		return undef;
 	}
 
-	return 1 if ($h_parse_json->{'success'} eq 'ok');
+	return 1 if ($json_answer->{'success'} eq 'ok');
 	return 0;
 }
 
@@ -338,14 +333,7 @@ sub del_record {
 					}
 				);
 
-				my $h_parse_json;
-				eval { $h_parse_json = decode_json($json_answer) };
-				if ($@) {
-					_print_it('error while parse JSON: ' . $@);
-					return undef;
-				}
-
-				if ( !$h_parse_json || exists $h_parse_json->{'error'} ) {
+				if ( !$json_answer || exists $json_answer->{'error'} ) {
 					_print_it('cannot del record');
 					return undef;
 				}

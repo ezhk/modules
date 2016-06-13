@@ -60,7 +60,7 @@ sub _get_api_response {
 		return undef;
 	}
 
-	if ( is_success($r->status_line) ) {
+	if ($r->is_success) {
 		my $h_parse_json;
 		eval { $h_parse_json = decode_json($r->content) };
 		if ($@) {

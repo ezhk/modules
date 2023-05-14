@@ -1,98 +1,77 @@
 #!/usr/bin/python3
 
+import json
+import typing
 
 import urllib3
-import json
 
 
-class PDD_DNS:
+class API360:
     """
-    Class provide API with PDD's Yandex.
-    Include some methods, that allow add/delete/show
+    Class provides DNS API with 360 API's Yandex.
+    Includes methods, that allow add/delete/show
     NS records and modify them.
     """
 
-    PDD_DNS_URL = "https://pddimp.yandex.ru/api2/admin/dns"
+    DNS_LIST = "https://api360.yandex.net/directory/v1/org/%(org_id)s/domains/%(domain)s/dns?perPage=9999"
+    DNS_ADD = "https://api360.yandex.net/directory/v1/org/%(org_id)s/domains/%(domain)s/dns"
+    DNS_EDIT = "https://api360.yandex.net/directory/v1/org/%(org_id)s/domains/%(domain)s/dns/%(record_id)s"
+    DNS_DELETE = "https://api360.yandex.net/directory/v1/org/%(org_id)s/domains/%(domain)s/dns/%(record_id)s"
 
-    def __init__(self, domainname, token):
+    def __init__(self, organization_id: int, domainname: str, token: str):
         self.token = token
+
+        self.org_id = organization_id
         self.domainname = domainname
+
         self.http = urllib3.PoolManager()
 
-    def _actions_domain(self, action=None, params={}):
-        """
-        Unified internal method, that allow add/del and modify methods.
+    def list_domain(self) -> typing.Dict[str, typing.Any]:
+        """Get domain records list."""
 
-        :param actions: string of method name
-        :param params: dicts with args for POST body
+        _url = self.DNS_LIST % {
+            "org_id": self.org_id,
+            "domain": self.domainname,
+        }
 
-        return tuple
-            :param status: boolean
-            :param message: description
-        """
+        r = self.http.request("GET", _url, headers={"Authorization": f"OAuth {self.token}"})
+        if r.status != 200:
+            raise ValueError(f"wrong status code response: {r.data}")
 
-        if not action or not params:
-            return (False, "_actions_domain: empty input vars")
+        return json.loads(r.data.decode("utf-8"))
 
-        url = "%s/%s" % (self.PDD_DNS_URL, action)
-        params.update({"domain": self.domainname})
+    def del_domain(self, record_id: int) -> typing.Dict[str, typing.Any]:
+        """Remove record by ID and raise exception on error."""
+        _url = self.DNS_DELETE % {"org_id": self.org_id, "domain": self.domainname, "record_id": record_id}
 
-        # POST data format like a string: key1=val1&key2=val2
-        post_body = "&".join(
-            ["%s=%s" % (key, value) for key, value in params.items()]
-        )
+        r = self.http.request("DELETE", _url, headers={"Authorization": f"OAuth {self.token}"})
+        if r.status != 200:
+            raise ValueError(f"wrong status code response: {r.data}")
 
-        try:
-            r = self.http.request(
-                "POST",
-                url,
-                body=post_body,
-                headers={
-                    "PddToken": self.token,
-                    "Content-Type": "application/x-www-form-urlencoded",
-                },
-            )
-            if r.status != 200:
-                return (False, "wrong status code: %s" % r.status)
+        return json.loads(r.data.decode("utf-8"))
 
-            json_obj = json.loads(r.data.decode("utf-8"))
-            if "error" in json_obj:
-                return (False, "error: %s" % json_obj["error"])
-            return (True, json_obj)
+    def add_domain(self, address: str, name: str, record_type: str, ttl: int) -> typing.Dict[str, typing.Any]:
+        """Method create A/AAAA record type."""
 
-        except BaseException as err:
-            return (False, str(err))
+        _url = self.DNS_ADD % {"org_id": self.org_id, "domain": self.domainname}
+        _body = json.dumps({"address": address, "name": name, "type": record_type, "ttl": ttl})
 
-    def add_domain(self, params={}):
-        if "type" not in params:
-            return (False, 'add_domain: "type" must be defined')
+        r = self.http.request("POST", _url, body=_body, headers={"Authorization": f"OAuth {self.token}"})
+        if r.status != 200:
+            raise ValueError(f"wrong status code response: {r.data}")
 
-        return self._actions_domain("add", params)
+        return json.loads(r.data.decode("utf-8"))
 
-    def del_domain(self, params={}):
-        if "record_id" not in params:
-            return (False, 'del_domain: "record_id" must be defined')
+    def edit_domain(
+        self, record_id: int, address: str, name: str, record_type: str, ttl: int
+    ) -> typing.Dict[str, typing.Any]:
+        """Method modify A/AAAA record type."""
 
-        return self._actions_domain("del", params)
+        _url = self.DNS_EDIT % {"org_id": self.org_id, "domain": self.domainname, "record_id": record_id}
+        _body = json.dumps({"address": address, "name": name, "type": record_type, "ttl": ttl})
 
-    def edit_domain(self, params={}):
-        if "record_id" not in params:
-            return (False, 'edit_domain: "record_id" must be defined')
+        r = self.http.request("POST", _url, body=_body, headers={"Authorization": f"OAuth {self.token}"})
+        if r.status != 200:
+            raise ValueError(f"wrong status code response: {r.data}")
 
-        return self._actions_domain("edit", params)
-
-    def list_domain(self):
-        url = "%s/list?domain=%s" % (self.PDD_DNS_URL, self.domainname)
-
-        try:
-            r = self.http.request("GET", url, headers={"PddToken": self.token})
-            if r.status != 200:
-                return (False, "wrong status code: %s" % r.status)
-
-            json_obj = json.loads(r.data.decode("utf-8"))
-            if "error" in json_obj:
-                return (False, json_obj["error"])
-            return (True, json_obj)
-
-        except BaseException as err:
-            return (False, str(err))
+        return json.loads(r.data.decode("utf-8"))

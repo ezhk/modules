@@ -1,19 +1,15 @@
 #!/usr/bin/python3
 
-
+import typing
 import urllib3
 
 
-def get_url_body(url=None, status_code=200, headers={}):
-    if url is None:
-        return (False, "URL must be defined")
+def get_url_body(url: str, status_code: int = 200, headers: typing.Dict[str, typing.Any] = {}) -> str:
+    """Returns URL response data"""
+    http = urllib3.PoolManager()
 
-    try:
-        http = urllib3.PoolManager()
-        r = http.request("GET", url, headers=headers)
-        if r.status != status_code:
-            return (False, "wrong status code: %s" % r.status)
-        return (True, r.data.decode("utf-8"))
+    r = http.request("GET", url, headers=headers)
+    if r.status != status_code:
+        raise ValueError(f"wrong status code: {r.status}")
 
-    except BaseException as err:
-        return (False, str(err))
+    return r.data.decode("utf-8")
